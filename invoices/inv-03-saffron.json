@@ -1,0 +1,37 @@
+{
+  "vendor": "Saffron Desk Supplies Pvt Ltd",
+  "invoice_number": "SDS/26-27/0392",
+  "invoice_date": "2026-10-22",
+  "due_date": "2026-11-21",
+  "currency": "INR",
+  "line_items": [
+    {
+      "description": "Ergonomic office chair, mesh",
+      "quantity": 4,
+      "unit_price": "8450.00",
+      "amount": "33800.00"
+    },
+    {
+      "description": "Standing desk frame, dual motor",
+      "quantity": 2,
+      "unit_price": "21900.00",
+      "amount": "43800.00"
+    },
+    {
+      "description": "Monitor arm, single",
+      "quantity": 4,
+      "unit_price": "2350.00",
+      "amount": "9400.00"
+    },
+    {
+      "description": "Cable management tray",
+      "quantity": 6,
+      "unit_price": "640.00",
+      "amount": "3840.00"
+    }
+  ],
+  "subtotal": "90840.00",
+  "tax": "16351.20",
+  "total": "107191.20",
+  "has_injection": false
+}

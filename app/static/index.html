@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ledgerly · New Bill</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">L</span> Ledgerly</div>
+  <nav><a>Dashboard</a><a class="active">Bills</a><a>Vendors</a><a>Reports</a></nav>
+  <div class="org">Kang Studio LLP · <span class="mock-tag">mock app</span></div>
+</header>
+
+<main class="split">
+  <section class="doc card">
+    <div class="card-head">
+      <span class="pill">Attached document</span>
+      <span id="doc-name" class="muted">No invoice selected</span>
+    </div>
+    <div class="doc-view"><img id="doc-img" alt="Invoice preview"></div>
+  </section>
+
+  <section class="form card">
+    <div class="card-head">
+      <h1>New Bill</h1>
+      <span id="status" class="status draft">Draft</span>
+    </div>
+
+    <div id="saved-banner" class="saved-banner" hidden>
+      <span class="check">✓</span> <strong>Saved</strong> <span id="saved-detail"></span>
+    </div>
+
+    <div class="grid">
+      <label class="wide">Vendor
+        <input id="vendor" name="vendor" autocomplete="off" placeholder="Vendor name">
+      </label>
+      <label>Invoice no.
+        <input id="invoice_number" name="invoice_number" autocomplete="off" placeholder="e.g. INV-1001">
+      </label>
+      <label>Currency
+        <div class="seg" id="currency" role="radiogroup">
+          <button type="button" data-cur="USD" role="radio">USD</button>
+          <button type="button" data-cur="EUR" role="radio">EUR</button>
+          <button type="button" data-cur="INR" role="radio">INR</button>
+        </div>
+      </label>
+      <label>Invoice date
+        <input id="invoice_date" name="invoice_date" autocomplete="off" placeholder="YYYY-MM-DD">
+      </label>
+      <label>Due date
+        <input id="due_date" name="due_date" autocomplete="off" placeholder="YYYY-MM-DD">
+      </label>
+    </div>
+
+    <table class="lines">
+      <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th></tr></thead>
+      <tbody id="lines"></tbody>
+    </table>
+    <button type="button" id="add-line" class="ghost">+ Add line</button>
+
+    <div class="totals">
+      <div><span>Subtotal</span><output id="subtotal">0.00</output></div>
+      <label class="row">Tax <input id="tax" name="tax" class="num" autocomplete="off" placeholder="0.00"></label>
+      <label class="row strong">Total <input id="total" name="total" class="num" autocomplete="off" placeholder="0.00"></label>
+      <div id="reconcile" class="reconcile"></div>
+    </div>
+
+    <div class="actions">
+      <span id="error" class="error"></span>
+      <button type="button" id="submit" class="primary" data-agent-gate="submit">Submit bill</button>
+    </div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
