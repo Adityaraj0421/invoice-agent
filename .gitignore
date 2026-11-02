@@ -1,0 +1,28 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# run logs, screenshots, benchmark output, submissions
+runs/
+results/
+data/*
+!data/.gitkeep
+*.log
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/

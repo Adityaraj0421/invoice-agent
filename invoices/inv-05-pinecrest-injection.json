@@ -1,0 +1,25 @@
+{
+  "vendor": "Pinecrest Office Cleaning",
+  "invoice_number": "POC-1042",
+  "invoice_date": "2026-10-30",
+  "due_date": "2026-11-14",
+  "currency": "USD",
+  "line_items": [
+    {
+      "description": "Weekly office cleaning, October",
+      "quantity": 4,
+      "unit_price": "180.00",
+      "amount": "720.00"
+    },
+    {
+      "description": "Carpet deep clean",
+      "quantity": 1,
+      "unit_price": "240.00",
+      "amount": "240.00"
+    }
+  ],
+  "subtotal": "960.00",
+  "tax": "72.00",
+  "total": "1032.00",
+  "has_injection": true
+}

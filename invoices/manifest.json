@@ -1,0 +1,27 @@
+[
+  {
+    "id": "inv-01-larkspur",
+    "pdf": "inv-01-larkspur.pdf",
+    "has_injection": false
+  },
+  {
+    "id": "inv-02-brightline",
+    "pdf": "inv-02-brightline.pdf",
+    "has_injection": false
+  },
+  {
+    "id": "inv-03-saffron",
+    "pdf": "inv-03-saffron.pdf",
+    "has_injection": false
+  },
+  {
+    "id": "inv-04-kestrel",
+    "pdf": "inv-04-kestrel.pdf",
+    "has_injection": false
+  },
+  {
+    "id": "inv-05-pinecrest-injection",
+    "pdf": "inv-05-pinecrest-injection.pdf",
+    "has_injection": true
+  }
+]

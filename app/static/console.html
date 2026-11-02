@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent console</title>
+<style>
+  :root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { margin: 0; background: #0b1020; color: #e5e7eb; font-size: 14px; }
+  header { padding: 14px 18px; border-bottom: 1px solid #1f2937; display: flex; align-items: center; gap: 10px; }
+  header h1 { font-size: 16px; margin: 0; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #475569; }
+  .dot.live { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+  .meta { padding: 10px 18px; color: #94a3b8; font-size: 12px; display: flex; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid #1f2937; }
+  .meta b { color: #e5e7eb; font-weight: 600; }
+  #feed { padding: 10px 14px 140px; display: flex; flex-direction: column; gap: 8px; }
+  .step { background: #111827; border: 1px solid #1f2937; border-radius: 10px; padding: 9px 12px; animation: in .25s ease-out; }
+  .step .top { display: flex; gap: 8px; align-items: center; font-size: 12px; color: #94a3b8; }
+  .step .act { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #1e293b; color: #a5b4fc; padding: 1px 6px; border-radius: 5px; }
+  .step .intent { margin-top: 4px; font-size: 14px; color: #f3f4f6; line-height: 1.35; }
+  .step .args { margin-top: 3px; font-size: 12px; color: #64748b; font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+  .step.gate { border-color: #f59e0b; } .step.block { border-color: #ef4444; background: #1f0f12; }
+  .step.ok { border-color: #22c55e; background: #0d1f16; } .step.warn { border-color: #f59e0b; background: #1f1a0d; }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: #334155; color: #e2e8f0; }
+  .badge.mock { background: #7c3aed; }
+  #confirm { position: fixed; left: 12px; right: 12px; bottom: 12px; background: #1c1917; border: 2px solid #f59e0b; border-radius: 12px; padding: 14px; display: none; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  #confirm h2 { margin: 0 0 6px; font-size: 15px; color: #fbbf24; }
+  #confirm p { margin: 0 0 6px; color: #e7e5e4; }
+  #confirm pre { margin: 0 0 10px; color: #d6d3d1; font-size: 12px; white-space: pre-wrap; max-height: 160px; overflow: auto; }
+  #confirm button { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 8px 16px; cursor: pointer; margin-right: 8px; }
+  .approve { background: #22c55e; color: #052e16; } .reject { background: #334155; color: #e5e7eb; }
+  @keyframes in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+<header><span id="live" class="dot"></span><h1>Invoice agent · live steps</h1><span id="mode" class="badge" hidden></span></header>
+<div class="meta">
+  <span>Invoice <b id="m-inv">–</b></span><span>Model <b id="m-model">–</b></span>
+  <span>Steps <b id="m-steps">0</b></span><span>Tokens <b id="m-tok">0</b></span>
+  <span>Est. cost <b id="m-cost">$0.0000</b></span><span>Elapsed <b id="m-time">0.0s</b></span>
+</div>
+<div id="feed"></div>
+<div id="confirm">
+  <h2>Approval needed before submitting</h2>
+  <p id="c-expl"></p>
+  <pre id="c-summary"></pre>
+  <button class="approve" id="c-yes">Approve &amp; submit</button><button class="reject" id="c-no">Reject</button>
+</div>
+<script>
+const TOKEN = "__CONSOLE_TOKEN__";
+const feed = document.getElementById("feed");
+let pending = null, t0 = null, timer = null;
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const set = (id, v) => document.getElementById(id).textContent = v;
+function card(cls, act, intent, args) {
+  const d = document.createElement("div"); d.className = "step " + (cls || "");
+  d.innerHTML = `<div class="top"></div><div class="intent"></div><div class="args"></div>`;
+  d.querySelector(".top").innerHTML = act; d.querySelector(".intent").textContent = intent || "";
+  d.querySelector(".args").textContent = args || "";
+  feed.appendChild(d); window.scrollTo(0, document.body.scrollHeight);
+}
+function decide(decision) {
+  if (!pending) return;
+  fetch(`/api/confirm/${pending}/decide`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision, token: TOKEN }) });
+  document.getElementById("confirm").style.display = "none"; pending = null;
+}
+document.getElementById("c-yes").onclick = () => decide("approve");
+document.getElementById("c-no").onclick = () => decide("reject");
+const es = new EventSource("/api/events/stream");
+es.onopen = () => document.getElementById("live").classList.add("live");
+es.onerror = () => document.getElementById("live").classList.remove("live");
+es.onmessage = (m) => {
+  const e = JSON.parse(m.data);
+  if (e.kind === "run_start") {
+    feed.innerHTML = ""; set("m-inv", e.invoice); set("m-model", e.model); set("m-steps", 0); set("m-tok", 0); set("m-cost", "$0.0000");
+    const b = document.getElementById("mode"); b.hidden = false; b.textContent = e.mock ? "MOCK (no API calls)" : "LIVE"; b.className = "badge" + (e.mock ? " mock" : "");
+    t0 = Date.now(); clearInterval(timer); timer = setInterval(() => set("m-time", ((Date.now() - t0) / 1000).toFixed(1) + "s"), 100);
+  } else if (e.kind === "step") {
+    set("m-steps", e.n);
+    card(e.gated ? "gate" : "", `<span>#${e.n}</span><span class="act">${esc(e.action)}</span>${e.safety ? '<span class="badge">safety: ' + esc(e.safety) + '</span>' : ""}${e.gated ? '<span class="badge">submit gate</span>' : ""}`, e.intent, e.args);
+  } else if (e.kind === "usage") {
+    set("m-tok", e.total_tokens.toLocaleString()); set("m-cost", e.cost_usd == null ? "n/a" : "$" + e.cost_usd.toFixed(4));
+  } else if (e.kind === "guard") {
+    card("warn", `<span class="act">local guard</span>`, e.message, e.detail);
+  } else if (e.kind === "confirm_request") {
+    pending = e.confirm_id; set("c-expl", e.explanation || ""); set("c-summary", e.summary || "");
+    document.getElementById("confirm").style.display = "block";
+  } else if (e.kind === "confirm_decided") {
+    card(e.decision === "approved" ? "ok" : "block", `<span class="act">human</span>`, e.decision === "approved" ? "Approved by human. Submitting." : "Rejected by human. Not submitting.");
+    document.getElementById("confirm").style.display = "none"; pending = null;
+  } else if (e.kind === "block") {
+    card("block", `<span class="act">blocked</span>`, e.message, e.detail);
+  } else if (e.kind === "saved") {
+    card("ok", `<span class="act">ledgerly</span>`, `Bill saved: ${e.bill_id}`);
+  } else if (e.kind === "run_end") {
+    clearInterval(timer); set("m-time", e.seconds.toFixed(1) + "s");
+    card(e.status === "submitted" ? "ok" : "warn", `<span class="act">done</span>`, `Run finished: ${e.status}`, e.message || "");
+  }
+};
+</script>
+</body>
+</html>
