@@ -35,6 +35,9 @@ def denormalize(v: float, size: int) -> int:
 
 def norm_key(k: str) -> str:
     k = str(k).strip()
+    # X11 keysym spellings seen from the real model, e.g. "Control_L" (2026-11-03 smoke test).
+    if len(k) > 2 and k[-2:] in ("_L", "_R"):
+        k = k[:-2]
     if "+" in k and len(k) > 1:
         return "+".join(norm_key(p) for p in k.split("+"))
     return KEY_ALIASES.get(k.lower(), k if len(k) > 1 else k)

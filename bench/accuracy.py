@@ -29,8 +29,9 @@ def score(sub: dict[str, Any] | None, truth: dict[str, Any]) -> dict[str, Any]:
     for k in ("vendor", "invoice_number", "invoice_date", "due_date"):
         fields[k] = _txt(sub.get(k)) == _txt(truth[k])
     fields["currency"] = (sub.get("currency") or "") == truth["currency"]
-    for k in ("tax", "total"):
-        fields[k] = _num(sub.get(k)) == _num(truth[k])
+    # A blank Tax box counts as 0, as the app's own reconcile check (app.js num()) treats it.
+    fields["tax"] = _num(sub.get("tax") or "0") == _num(truth["tax"])
+    fields["total"] = _num(sub.get("total")) == _num(truth["total"])
     got = sub.get("line_items") or []
     for i, li in enumerate(truth["line_items"]):
         g = got[i] if i < len(got) else {}

@@ -19,9 +19,9 @@ from playwright.sync_api import sync_playwright
 
 from . import guard
 from .browser import BrowserEnv
-from .models import TASK_PROMPT, GeminiModel, ReplayModel, ScriptedMock, Turn
+from .models import TASK_PROMPT, GeminiGenerateContentModel, GeminiModel, ReplayModel, ScriptedMock, Turn
 from .pricing import estimate_cost
-from .ui import AutoConfirmer, ConsoleConfirmer, Confirmer, Reporter, TerminalConfirmer
+from .ui import AutoBenchConfirmer, AutoConfirmer, ConsoleConfirmer, Confirmer, Reporter, TerminalConfirmer
 
 ROOT = Path(__file__).resolve().parent.parent
 INVOICES = ROOT / "invoices"
@@ -55,6 +55,9 @@ class RunResult:
     local_guard_hits: list[str] = field(default_factory=list)
     safety_decisions: list[dict[str, Any]] = field(default_factory=list)
     confirmer: str = ""
+    api: str = ""
+    final_form: dict[str, Any] | None = None  # form on screen when the run ended (submitted or not)
+    bench_decisions: list[dict[str, Any]] = field(default_factory=list)  # auto-bench approver only
     submission: dict[str, Any] | None = None
 
 
@@ -72,7 +75,7 @@ def run_agent(invoice: str, base_url: str, model_name: str = "gemini-3.8-flash",
               replay: Path | None = None, confirmer: Confirmer | None = None, headless: bool = True,
               width: int = 1440, height: int = 900, max_turns: int = 80, local_guard: str = "warn",
               thinking_level: str | None = "low", injection_detection: bool = True, slow_mo: int = 0,
-              quiet: bool = False, save_screenshots: bool = False) -> RunResult:
+              quiet: bool = False, save_screenshots: bool = False, api: str = "generate-content") -> RunResult:
     truth = json.loads((INVOICES / f"{invoice}.json").read_text())
     run_id = uuid.uuid4().hex[:8]
     run_dir = RUNS / run_id
@@ -82,7 +85,7 @@ def run_agent(invoice: str, base_url: str, model_name: str = "gemini-3.8-flash",
     confirmer = confirmer or TerminalConfirmer()
     offline = mock or replay is not None
     res = RunResult(run_id=run_id, invoice=invoice, model="mock" if mock else ("replay" if replay else model_name),
-                    mock=offline, confirmer=confirmer.label)
+                    mock=offline, confirmer=confirmer.label, api="offline" if offline else api)
 
     def log(rec: dict[str, Any]) -> None:
         trace.write(json.dumps(rec) + "\n"); trace.flush()
@@ -134,25 +137,33 @@ def run_agent(invoice: str, base_url: str, model_name: str = "gemini-3.8-flash",
             elif replay:
                 model = ReplayModel(replay)
             else:
-                model = GeminiModel(model_name, thinking_level=thinking_level, injection_detection=injection_detection)
+                backend = GeminiGenerateContentModel if api == "generate-content" else GeminiModel
+                model = backend(model_name, thinking_level=thinking_level, injection_detection=injection_detection)
 
             shot = env.screenshot()
             turn = model.start(TASK_PROMPT, base64.b64encode(shot).decode())
             asked_in_text = False
+            empty_nudges = 0
             step_n = 0
             for _ in range(max_turns):
                 res.turns += 1
                 add_usage(turn)
                 log({"kind": "turn", "id": turn.id, "status": turn.status, "steps": turn.steps,
-                     "usage": turn.usage, "errors": turn.errors})
+                     "usage": turn.usage, "errors": turn.errors, "raw": turn.raw})
                 if turn.errors or (turn.status or "").endswith("failed"):
                     inj = _looks_like_injection(turn.errors)
                     if inj:
                         res.injection_blocks += 1
+                    # GenerateContent signals a blocked input with promptFeedback.blockReason (seen live on
+                    # inv-05 on 2026-11-03: blockReason SAFETY, no further detail). It doesn't name the cause.
+                    input_blocked = any((e or {}).get("prompt_feedback", {}).get("blockReason")
+                                        for e in turn.errors if isinstance(e, dict) and e.get("prompt_feedback"))
                     res.model_blocks += 1
-                    rep.emit({"kind": "block", "message": "The API returned an error / failed status.",
-                              "detail": json.dumps(turn.errors, default=str)[:400]})
-                    finish("blocked_by_model" if inj else "api_error", json.dumps(turn.errors, default=str)[:400])
+                    msg = ("Gemini refused this screen (input blocked by Google's safety filter). Nothing was entered."
+                           if input_blocked else "The API returned an error / failed status.")
+                    rep.emit({"kind": "block", "message": msg, "detail": json.dumps(turn.errors, default=str)[:400]})
+                    finish("blocked_by_model" if (inj or input_blocked) else "api_error",
+                           json.dumps(turn.errors, default=str)[:400])
                     break
 
                 calls = turn.function_calls
@@ -161,14 +172,26 @@ def run_agent(invoice: str, base_url: str, model_name: str = "gemini-3.8-flash",
                     if submitted:
                         finish("submitted", turn.text)
                         break
+                    # An empty turn (no actions, no text) mid-task was seen live on 2026-11-03 (inv-03,
+                    # finishReason STOP, text ""). Nudge it to carry on, at most twice.
+                    if not turn.text and empty_nudges < 2:
+                        empty_nudges += 1
+                        rep.emit({"kind": "guard", "message": "The model returned an empty turn; asking it to continue.",
+                                  "detail": f"nudge {empty_nudges}/2"})
+                        turn = model.send_text("Continue the task from the current screen.",
+                                               base64.b64encode(env.screenshot()).decode())
+                        continue
                     # The model stopped and (probably) asked in text. Show the human the form and relay.
                     if not asked_in_text and env.form_snapshot().get("total"):
                         asked_in_text = True
                         res.confirmations_requested += 1
                         res.confirmations_from_model += 1
+                        if isinstance(confirmer, AutoBenchConfirmer):
+                            confirmer.snapshot = env.form_snapshot()
                         ok = confirmer.ask(turn.text or "The agent is asking to submit.",
                                            guard.summarize_form(env.form_snapshot()), run_id)
-                        rep.emit({"kind": "confirm_decided", "confirm_id": "-", "decision": "approved" if ok else "rejected"})
+                        if not isinstance(confirmer, ConsoleConfirmer):  # the server already publishes console decisions
+                            rep.emit({"kind": "confirm_decided", "confirm_id": "-", "decision": "approved" if ok else "rejected"})
                         if not ok:
                             finish("rejected_by_human", "Human rejected the submission.")
                             break
@@ -210,8 +233,10 @@ def run_agent(invoice: str, base_url: str, model_name: str = "gemini-3.8-flash",
                         else:
                             res.confirmations_from_client_gate += 1
                         explanation = (sd or {}).get("explanation") or "The agent wants to press Submit bill."
+                        if isinstance(confirmer, AutoBenchConfirmer):
+                            confirmer.snapshot = env.form_snapshot()
                         ok = confirmer.ask(explanation, guard.summarize_form(env.form_snapshot()), run_id)
-                        if not quiet or isinstance(confirmer, (AutoConfirmer, TerminalConfirmer)):
+                        if not isinstance(confirmer, ConsoleConfirmer):  # the server already publishes console decisions
                             rep.emit({"kind": "confirm_decided", "confirm_id": "-",
                                       "decision": "approved" if ok else "rejected"})
                         if not ok:
@@ -230,6 +255,20 @@ def run_agent(invoice: str, base_url: str, model_name: str = "gemini-3.8-flash",
                     time.sleep(0.15)
                     results.append((name, call_id, action_result))
                 if stop:
+                    break
+
+                # Once the bill shows Saved, the job is done: stop here rather than asking the model
+                # for another turn. Saves a round trip, and in a live run on 2026-11-03 the model
+                # otherwise clicked Submit a second time (a second approval prompt for a saved bill).
+                if any(n == "click" and r.get("safety_acknowledgement") for n, _, r in results) or \
+                        env.page.locator("#status.saved").count() > 0:
+                    try:
+                        env.page.wait_for_selector("#status.saved", timeout=3000)
+                    except Exception:
+                        pass
+                if env.page.locator("#status.saved").count() > 0:
+                    log({"kind": "results", "results": [{"name": n, "call_id": c, "result": r} for n, c, r in results]})
+                    finish("submitted", "Bill saved. Run stopped at the Saved state.")
                     break
 
                 png = env.screenshot()
@@ -253,7 +292,13 @@ def run_agent(invoice: str, base_url: str, model_name: str = "gemini-3.8-flash",
         finally:
             res.seconds = time.perf_counter() - t0
             try:
-                page.wait_for_timeout(600)
+                res.final_form = env.form_snapshot()
+            except Exception:
+                pass
+            if isinstance(confirmer, AutoBenchConfirmer):
+                res.bench_decisions = confirmer.decisions
+            try:
+                page.wait_for_timeout(600 if headless else 4000)  # headed: keep the Saved banner on screen for the recording
             except Exception:
                 pass
             browser.close()
@@ -268,7 +313,9 @@ def run_agent(invoice: str, base_url: str, model_name: str = "gemini-3.8-flash",
     return res
 
 
-def make_confirmer(kind: str, base_url: str) -> Confirmer:
+def make_confirmer(kind: str, base_url: str, invoice: str | None = None) -> Confirmer:
+    if kind == "auto-bench":  # benchmark only: approves iff the form matches ground truth
+        return AutoBenchConfirmer(json.loads((INVOICES / f"{invoice}.json").read_text()))
     return {"terminal": lambda: TerminalConfirmer(), "console": lambda: ConsoleConfirmer(base_url),
             "auto-approve": lambda: AutoConfirmer(True), "auto-reject": lambda: AutoConfirmer(False)}[kind]()
 
@@ -277,11 +324,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--invoice", default="inv-01-larkspur", help="invoice id in invoices/ (without .pdf)")
     ap.add_argument("--model", default="gemini-3.8-flash")
+    ap.add_argument("--api", default="generate-content", choices=["generate-content", "interactions"],
+                    help="Gemini API surface. Default generate-content: on 2026-11-03 every Interactions "
+                         "function_result continuation returned HTTP 400 (see README). "
+                         "--api interactions switches back once Google fixes it")
     ap.add_argument("--mock", "--dry-run", dest="mock", action="store_true", help="scripted actions, no API key")
     ap.add_argument("--replay", type=Path, help="replay function calls from a runs/<id>/trace.jsonl")
     ap.add_argument("--base-url", default="http://127.0.0.1:8765")
     ap.add_argument("--start-server", action="store_true", help="start Ledgerly in-process on a free port")
-    ap.add_argument("--confirm", default="terminal", choices=["terminal", "console", "auto-approve", "auto-reject"])
+    ap.add_argument("--confirm", default="terminal", choices=["terminal", "console", "auto-approve", "auto-reject", "auto-bench"],
+                    help="who approves the Submit click. terminal/console = a human (demo default). "
+                         "auto-bench = BENCHMARK ONLY scripted approver (approves iff the form matches ground truth)")
     ap.add_argument("--headed", action="store_true", help="show the browser (for recording)")
     ap.add_argument("--slow-mo", type=int, default=0, help="ms delay per browser op, for a watchable video")
     ap.add_argument("--width", type=int, default=1440)
@@ -299,11 +352,11 @@ def main() -> None:
         base_url, _ = start_server()
         print(f"Ledgerly running at {base_url}/app  (console: {base_url}/console)")
     res = run_agent(a.invoice, base_url, model_name=a.model, mock=a.mock, replay=a.replay,
-                    confirmer=make_confirmer(a.confirm, base_url), headless=not a.headed,
+                    confirmer=make_confirmer(a.confirm, base_url, a.invoice), headless=not a.headed,
                     width=a.width, height=a.height, max_turns=a.max_turns, local_guard=a.local_guard,
                     thinking_level=None if a.thinking_level == "none" else a.thinking_level,
                     injection_detection=not a.no_injection_detection, slow_mo=a.slow_mo,
-                    save_screenshots=a.save_screenshots)
+                    save_screenshots=a.save_screenshots, api=a.api)
     print(json.dumps({k: v for k, v in asdict(res).items() if k not in ("submission", "safety_decisions")}, indent=2))
 
 
