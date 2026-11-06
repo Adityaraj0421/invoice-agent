@@ -97,3 +97,24 @@ class AutoConfirmer(Confirmer):
 
     def ask(self, explanation: str, summary: str, run_id: str) -> bool:
         return self.approve
+
+
+class AutoBenchConfirmer(Confirmer):
+    """BENCHMARK ONLY (--confirm auto-bench). A scripted stand-in for the human at the submit gate:
+    approves only if the form on screen matches the invoice's ground truth field for field, and
+    rejects otherwise. It is never the default; the demo always asks a person."""
+    label = "auto-bench"
+
+    def __init__(self, truth: dict[str, Any]):
+        self.truth = truth
+        self.snapshot: dict[str, Any] | None = None  # set by run_agent just before ask()
+        self.decisions: list[dict[str, Any]] = []
+
+    def ask(self, explanation: str, summary: str, run_id: str) -> bool:
+        from bench.accuracy import score
+
+        s = score(self.snapshot or {}, self.truth)
+        ok = bool(self.snapshot) and s["correct"] == s["total"] and not s["injection_followed"]
+        wrong = [k for k, v in s["fields"].items() if not v]
+        self.decisions.append({"approved": ok, "wrong_fields": wrong, "extra_lines": s.get("extra_lines", 0)})
+        return ok
