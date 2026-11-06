@@ -1,5 +1,6 @@
 """End-to-end through the real browser + mock app, with the scripted (no-API) model."""
 import json
+import struct
 
 import httpx
 import pytest
@@ -53,6 +54,38 @@ def test_client_gate_fires_without_model_safety_decision(base_url, tmp_path):
     r2 = run_agent("inv-04-kestrel", base_url, replay=p, confirmer=AutoConfirmer(False), quiet=True)
     assert r2.confirmations_from_client_gate == 1 and r2.confirmations_from_model == 0
     assert r2.status == "rejected_by_human" and r2.submission is None
+
+
+def test_screenshot_stays_1440x900_at_window_scale(base_url):
+    """A 0.67 device scale shrinks the window, not the screenshot or click coordinates."""
+    from playwright.sync_api import sync_playwright
+
+    from agent.browser import BrowserEnv
+    from agent.run import chromium_launch_args
+
+    assert chromium_launch_args(True, 0.67, 1440, 900) == []
+    assert chromium_launch_args(False, 1.0, 1440, 900) == []
+    headed = chromium_launch_args(False, 0.67, 1440, 900)
+    assert "--force-device-scale-factor=0.67" in headed
+    assert any(a.startswith("--window-size=") for a in headed)
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True, args=["--force-device-scale-factor=0.67"])
+        ctx = browser.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=0.67)
+        page = ctx.new_page()
+        env = BrowserEnv(page, 1440, 900, base_url)
+        env.install_allowlist()
+        page.goto(f"{base_url}/app?invoice=inv-01-larkspur")
+        page.wait_for_selector("#vendor")
+        png = env.screenshot()
+        assert struct.unpack(">II", png[16:24]) == (1440, 900)
+        # device pixels would be ~965x603; css scale is what the model must keep seeing
+        device = struct.unpack(">II", page.screenshot(type="png")[16:24])
+        assert device[0] < 1440 and device[1] < 900
+        x, y = env.locate("#vendor")
+        env.execute("click", {"x": x, "y": y})
+        assert page.evaluate("document.activeElement.id") == "vendor"
+        browser.close()
 
 
 def test_agent_browser_cannot_reach_console(base_url):

@@ -72,6 +72,7 @@ Useful flags:
 | `--local-guard block` | Refuses to start when the local scan finds injection-like text in the PDF (default `warn`) |
 | `--no-injection-detection` | Turns off Gemini's prompt-injection detection |
 | `--save-screenshots` | Saves each step's screenshot |
+| `--window-scale` | Headed only. Shrinks the Chromium window (for example `0.67` on a laptop) so the 1440×900 page fits. Screenshots stay 1440×900 |
 | `--replay runs/<id>/trace.jsonl` | Re-executes a recorded run without calling the API |
 
 Every run writes `runs/<id>/trace.jsonl` (every request and response step, with screenshots elided) and `runs/<id>/result.json`.
