@@ -160,7 +160,9 @@ class BrowserEnv:
         return {}
 
     def screenshot(self) -> bytes:
-        return self.page.screenshot(type="png")
+        # CSS pixels, not device pixels. A headed --window-scale below 1 must not change
+        # the 1440x900 bitmap the model sees, or the click coordinates derived from it.
+        return self.page.screenshot(type="png", scale="css")
 
     def function_result(self, name: str, call_id: str, result: dict[str, Any], png: bytes) -> dict[str, Any]:
         """Shape from the docs' get_function_responses()."""

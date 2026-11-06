@@ -11,6 +11,7 @@ uvicorn app.server:app --port 8765                         # terminal A, off-scr
 
 - Open `http://127.0.0.1:8765/console` in a normal browser window and snap it to the **right third** of the screen.
 - Leave the **left two-thirds** for the agent's Chromium window. It opens when you run the command below.
+- On a laptop, add `--window-scale 0.67` so that window shows the full 1440×900 page instead of clipping it.
 - Do one full rehearsal per invoice so that runs/ has traces. If a live take misbehaves, you can re-shoot with the same actions:
   `python -m agent.run --invoice <id> --replay runs/<id>/trace.jsonl --headed --slow-mo 150 --confirm console`. The console badge then
   reads **MOCK**, so say so on screen or use the live take.

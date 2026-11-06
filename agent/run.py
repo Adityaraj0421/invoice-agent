@@ -28,6 +28,38 @@ INVOICES = ROOT / "invoices"
 RUNS = ROOT / "runs"
 ALLOWED_DECISIONS = {None, "", "allowed", "allow", "regular", "require_confirmation"}
 
+# Outer window in device-independent pixels. --force-device-scale-factor multiplies
+# this into screen pixels, so a 1440x900 page at 0.67 is about 965x603 plus the frame.
+# The extra DIPs are the tab strip and window frame; without them the viewport is clipped.
+_HEADED_FRAME_W = 64
+_HEADED_FRAME_H = 160
+
+
+def chromium_launch_args(headless: bool, window_scale: float, width: int, height: int) -> list[str]:
+    """Headed-only flags. Below 1, shrink the window; the CSS viewport stays width x height."""
+    if headless or window_scale >= 1:
+        return []
+    if window_scale <= 0:
+        raise ValueError("window_scale must be positive")
+    win_w, win_h = width + _HEADED_FRAME_W, height + _HEADED_FRAME_H
+    return [
+        f"--force-device-scale-factor={window_scale:g}",
+        f"--window-size={win_w},{win_h}",
+    ]
+
+
+def _apply_headed_window(page, headless: bool, window_scale: float, width: int, height: int) -> None:
+    """Playwright resizes the window to the viewport after launch. Put the scaled size back."""
+    if headless or window_scale >= 1:
+        return
+    win_w, win_h = width + _HEADED_FRAME_W, height + _HEADED_FRAME_H
+    session = page.context.new_cdp_session(page)
+    window = session.send("Browser.getWindowForTarget")
+    session.send("Browser.setWindowBounds", {
+        "windowId": window["windowId"],
+        "bounds": {"width": win_w, "height": win_h, "windowState": "normal"},
+    })
+
 
 @dataclass
 class RunResult:
@@ -75,7 +107,8 @@ def run_agent(invoice: str, base_url: str, model_name: str = "gemini-3.8-flash",
               replay: Path | None = None, confirmer: Confirmer | None = None, headless: bool = True,
               width: int = 1440, height: int = 900, max_turns: int = 80, local_guard: str = "warn",
               thinking_level: str | None = "low", injection_detection: bool = True, slow_mo: int = 0,
-              quiet: bool = False, save_screenshots: bool = False, api: str = "generate-content") -> RunResult:
+              window_scale: float = 1.0, quiet: bool = False, save_screenshots: bool = False,
+              api: str = "generate-content") -> RunResult:
     truth = json.loads((INVOICES / f"{invoice}.json").read_text())
     run_id = uuid.uuid4().hex[:8]
     run_dir = RUNS / run_id
@@ -113,9 +146,11 @@ def run_agent(invoice: str, base_url: str, model_name: str = "gemini-3.8-flash",
     t0 = time.perf_counter()
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=headless, slow_mo=slow_mo)
+        browser = pw.chromium.launch(headless=headless, slow_mo=slow_mo,
+                                     args=chromium_launch_args(headless, window_scale, width, height))
         ctx = browser.new_context(viewport={"width": width, "height": height})
         page = ctx.new_page()
+        _apply_headed_window(page, headless, window_scale, width, height)
         env = BrowserEnv(page, width, height, base_url)
         env.install_allowlist()
         page.goto(f"{base_url}/app?invoice={invoice}&run={run_id}")
@@ -339,6 +374,9 @@ def main() -> None:
     ap.add_argument("--slow-mo", type=int, default=0, help="ms delay per browser op, for a watchable video")
     ap.add_argument("--width", type=int, default=1440)
     ap.add_argument("--height", type=int, default=900)
+    ap.add_argument("--window-scale", type=float, default=1.0,
+                    help="headed only. Shrink the Chromium window (0.67 fits a 1440x900 page in about "
+                         "two-thirds of a laptop screen). Screenshots stay 1440x900 CSS pixels")
     ap.add_argument("--max-turns", type=int, default=80)
     ap.add_argument("--thinking-level", default="low", choices=["minimal", "low", "medium", "high", "none"])
     ap.add_argument("--no-injection-detection", action="store_true")
@@ -346,6 +384,8 @@ def main() -> None:
     ap.add_argument("--save-screenshots", action="store_true")
     a = ap.parse_args()
 
+    if a.window_scale <= 0:
+        ap.error("--window-scale must be positive")
     base_url = a.base_url
     if a.start_server:
         from .serve import start_server
@@ -356,7 +396,7 @@ def main() -> None:
                     width=a.width, height=a.height, max_turns=a.max_turns, local_guard=a.local_guard,
                     thinking_level=None if a.thinking_level == "none" else a.thinking_level,
                     injection_detection=not a.no_injection_detection, slow_mo=a.slow_mo,
-                    save_screenshots=a.save_screenshots, api=a.api)
+                    window_scale=a.window_scale, save_screenshots=a.save_screenshots, api=a.api)
     print(json.dumps({k: v for k, v in asdict(res).items() if k not in ("submission", "safety_decisions")}, indent=2))
 
 
